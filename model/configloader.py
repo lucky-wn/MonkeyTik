@@ -34,7 +34,6 @@ class ConfigLoader:
         self.host = self.config.get("service", "host")
         self.port = self.config.get("service", "port")
         self.update_datas = self.config.get("service", "update_datas")
-        self.measurement_name = self.config.get("service", "measurement_name")
 
 
 if __name__ == '__main__':
