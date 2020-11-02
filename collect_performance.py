@@ -6,15 +6,12 @@
 # @Software: PyCharm
 import subprocess
 import time
-from threading import Thread
+import re
+from multiprocessing import Pool
 from model.configloader import ConfigLoader
 
 config = ConfigLoader()
 TIME_STAMP = time.strftime('%Y%m%d.%H%M%S', time.localtime(time.time()))
-"""
-curl -i -XPOST 'http://localhost:8086/write?db=monkey4test' --data-binary 
-'performance,serial=mi2s,type=cpu value=16,start_time_new=20201028.182448 1603880702905377900'
-"""
 
 
 class Performance:
@@ -26,6 +23,7 @@ class Performance:
         self.port = config.port
         self.product = "monkey4test"
         self.project = "performance"
+        self.now_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 
     def get_pid(self):
         """获取进程号"""
@@ -33,27 +31,67 @@ class Performance:
         pid = subprocess.getoutput(cmd)
         return pid
 
-    def upload_sentence(self, performance_type, performance_value):
+    def get_upload_sentence(self, performance_type, performance_value):
+        """拼接curl句式"""
         now_time = str(time.time()).replace(".", "")
         timestamp_19 = now_time + '0' * (19 - len(now_time))
         sentence = "curl -i -XPOST 'http://%s:%s/write?db=%s' --data-binary '%s,serial=mi2s,type=%s value=%s,start_time_new=%s %s'" \
-                   %(self.host, self.port, self.product, self.project, performance_type, performance_value, TIME_STAMP, timestamp_19)
+                   % (self.host, self.port, self.product, self.project, performance_type, performance_value, TIME_STAMP,
+                      timestamp_19) + "\n"
+        print(performance_type, performance_value)
+        print(sentence)
         return sentence
+
+    def upload_sentence_data(self, curl_sentence):
+        """上传到数据库"""
+        curl_ret = subprocess.getoutput(curl_sentence)
+        if curl_ret.find('204 No Content') == -1:
+            post_fail_file = open("performance_pfail_%s.txt" % self.now_time, 'a')
+            post_fail_file.close()
+
+    def get_performance_parameter(self):
+        """获取性能参数，并写入文件"""
+        numb = 0
+        while numb < 500:
+            parameter_file = open("performance_%s.txt" % self.now_time, 'a')
+            parameter_file.write(self.get_upload_sentence("cpu", self.get_cpu(self.get_pid())))
+            parameter_file.write(self.get_upload_sentence("mem", self.get_mem(self.get_pid())))
+            # parameter_file.write()
+            # parameter_file.write()
+            parameter_file.close()
+            numb += 1
+
+    def post_performance_parameter(self):
+        """上传性能数据至数据库"""
+        s1, s2 = -1, 0
+        while s2 > s1:
+            time.sleep(10)
+            pf = open("performance_%s.txt" % self.now_time, 'rb')
+            # 0,从文件开头;1,从当前位置;2,从文件末尾
+            pf.seek(s2, 1)
+            for le in [line.strip() for line in pf.readlines()]:
+                # TODO
+                self.upload_sentence_data(le)
+            s1 = s2
+            s2 = pf.tell()
+            pf.close()
+
+    def get_mem(self, pid):
+        """获取memory"""
+        cmd = "adb shell dumpsys meminfo|grep %s | head -n 1| awk '{print $1}'" % pid
+        mem = subprocess.getoutput(cmd)
+        return re.sub(r",|K|:", "", mem)
 
     def get_cpu(self, pid):
         """获取cpu"""
         cmd = "adb shell top -n 1|grep %s|awk '{print $9}'" % pid
         return subprocess.getoutput(cmd)
 
-    def get_performance_parameter(self):
-        app_pid = self.get_pid()
-        performance_value = self.get_cpu(app_pid)
-        sen = self.upload_sentence("cpu", performance_value)
-        print(sen)
-        subprocess.getoutput(sen)
-
 
 if __name__ == '__main__':
     pe = Performance()
-    while True:
-        pe.get_performance_parameter()
+    pool = Pool(2)
+    pool.apply_async(pe.get_performance_parameter, )
+    pool.apply_async(pe.post_performance_parameter, )
+    pool.close()
+    pool.join()
